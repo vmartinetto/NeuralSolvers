@@ -1,3 +1,4 @@
+from torch import tanh
 from torch.nn import Module
 
 
@@ -20,6 +21,7 @@ class MultiModelHPM(Module):
         alpha_net_input = derivatives[:, :3]
         alpha_output = self.alpha_net(alpha_net_input)
         alpha_output = alpha_output.view(-1)
+        alpha_output = 0.1 + 0.05 * tanh(alpha_output)
 
         heat_source_input = derivatives[:, :3]  # only positional input
         heat_source_ouput = self.heat_source_net(heat_source_input)
@@ -31,3 +33,13 @@ class MultiModelHPM(Module):
         predicted_u_t = alpha_output * (u_xx + u_yy) + heat_source_ouput
 
         return predicted_u_t
+    
+    def cuda(self):
+        super(MLP, self).cuda()
+        self.lb = self.lb.cuda()
+        self.ub = self.ub.cuda()
+
+    def cpu(self):
+        super(MLP, self).cpu()
+        self.lb = self.lb.cpu()
+        self.ub = self.ub.cpu()

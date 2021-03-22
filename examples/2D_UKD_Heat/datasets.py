@@ -55,6 +55,7 @@ class InitialConditionDataset(Dataset):
         # Reshape image from 1D array to 2D array
         value = np.array(value).reshape(-1)
         value = value.reshape(num_x, num_y)
+        value = value.astype(np.float)
 
         # Apply bilateralFilter to improve segmentation quality
         value = denoise_bilateral(
@@ -98,7 +99,7 @@ class InitialConditionDataset(Dataset):
         return value, timing
 
     def __init__(self, data_info, batch_size,
-                 num_batches, useGPU=False):
+                 num_batches, use_gpu):
         """Constructor of the initial condition dataset.
         Args:
             data_info (dict): dictionary with info about the data.
@@ -151,6 +152,7 @@ class InitialConditionDataset(Dataset):
         # => adapt num_batches to real number of batches for avoiding empty batches
         self.batch_size = batch_size
         num_samples = min((num_batches * batch_size, len(self.x_values)))
+        self.num_batches = num_samples // self.batch_size
 
         # Create lists with boundary values for spatio-temporal coordinates
         self.low_bound = [
@@ -167,7 +169,7 @@ class InitialConditionDataset(Dataset):
         self.y_values = self.y_values * data_info["spat_res"]
         self.t_values = data_info["t_max"] * self.t_values / data_info["num_t"]
 
-        if useGPU:
+        if use_gpu:
             dtype = torch.cuda.FloatTensor
         else:
             dtype = torch.FloatTensor
@@ -195,7 +197,7 @@ class InitialConditionDataset(Dataset):
         """
         Length of the dataset
         """
-        return len(self.x_values)
+        return self.num_batches
 
     def __getitem__(self, index):
         """
@@ -215,7 +217,7 @@ class InitialConditionDataset(Dataset):
             self.t_values[index * self.batch_size: (index + 1) * self.batch_size])
         u_values = (
             self.u_values[index * self.batch_size: (index + 1) * self.batch_size])
-        return torch.stack([x_values, y_values, t_values], 1), u_values
+        return torch.stack([x_values, y_values, t_values], 1), u_values.reshape(-1,1)
 
 
 class PDEDataset(Dataset):
@@ -223,7 +225,7 @@ class PDEDataset(Dataset):
     Dataset with points (x,y,t) to train HPM model on: HPM(x,y,t) ≈ du/dt.
     """
 
-    def __init__(self, data_info, batch_size, num_batches, useGPU=False):
+    def __init__(self, data_info, batch_size, num_batches, use_gpu):
         """Constructor of the residual poins dataset.
         Args:
             data_info (dict): dictionary with info about the data.
@@ -264,6 +266,7 @@ class PDEDataset(Dataset):
         # Sometimes we are loading less files than we specified by batch_size + num_batches
         # => adapt num_batches to real number of batches for avoiding empty batches
         self.batch_size = batch_size
+        self.num_batches = num_batches
         num_samples = min((num_batches * batch_size, len(self.x_values)))
 
         # Convert indices to physical quantities [mm] & [s]
@@ -271,7 +274,7 @@ class PDEDataset(Dataset):
         self.y_values = self.y_values * data_info["spat_res"]
         self.t_values = data_info["t_max"] * self.t_values / data_info["num_t"]
 
-        if useGPU:
+        if use_gpu:
             dtype = torch.cuda.FloatTensor
         else:
             dtype = torch.FloatTensor
@@ -294,7 +297,7 @@ class PDEDataset(Dataset):
         """
         Length of the dataset
         """
-        return len(self.x_values)
+        return self.num_batches
 
     def __getitem__(self, index):
         """
