@@ -59,7 +59,7 @@ class PINN(nn.Module):
                 print("Name of the project was not specified. This will lead to assigning the project to 'uncategorized' group")
             if self.use_horovod or (self.use_horovod and hvd.rank()) == 0:
                 wandb.init(project=project_name)
-                wandb.watch(model)
+                #wandb.watch(model)
 
         if isinstance(model, nn.Module):
             self.model = model
@@ -95,9 +95,9 @@ class PINN(nn.Module):
 
         if isinstance(pde_loss,HPMLoss):
             self.is_hpm = True
-            if self.use_wandb:
-                if self.use_horovod or (self.use_horovod and hvd.rank()) == 0:
-                    wandb.watch(pde_loss.hpm_model)
+            #if self.use_wandb:
+            #    if self.use_horovod or (self.use_horovod and hvd.rank()) == 0:
+            #        wandb.watch(pde_loss.hpm_model)
 
         if isinstance(initial_condition, InitialCondition):
             self.initial_condition = initial_condition
@@ -220,14 +220,15 @@ class PINN(nn.Module):
             the PDE at the key "PDE" and the data for the boundary condition under the name of the boundary condition
         """
 
-        pinn_loss = 0
+        pinn_loss, init_loss, pde_loss, boundary_loss = torch.zeros(4)
         # unpack training data
         if type(training_data["Initial_Condition"]) is list:
             # initial condition loss
             if len(training_data["Initial_Condition"]) == 2:
-                pinn_loss = pinn_loss + self.initial_condition(training_data["Initial_Condition"][0][0].type(self.dtype),
+                init_loss = self.initial_condition(training_data["Initial_Condition"][0][0].type(self.dtype),
                                                                self.model,
                                                                training_data["Initial_Condition"][1][0].type(self.dtype))
+                pinn_loss = pinn_loss + init_loss
             else:
                 raise ValueError("Training Data for initial condition is a tuple (x,y) with x the  input coordinates"
                                  " and ground truth values y")
@@ -236,20 +237,23 @@ class PINN(nn.Module):
                              " and ground truth values y")
 
         if type(training_data["PDE"]) is not list:
-            pinn_loss = pinn_loss + self.pde_loss(training_data["PDE"][0].type(self.dtype), self.model)
+            pde_loss = self.pde_loss(training_data["PDE"][0].type(self.dtype), self.model)
+            pinn_loss = pinn_loss + pde_loss
         else:
             raise ValueError("Training Data for PDE data is a single tensor consists of residual points ")
         if not self.is_hpm:
             if isinstance(self.boundary_condition, list):
                 for bc in self.boundary_condition:
-                    pinn_loss = pinn_loss + self.calculate_boundary_condition(bc, training_data[bc.name])
+                    boundary_loss = self.calculate_boundary_condition(bc, training_data[bc.name])
+                    pinn_loss = pinn_loss + boundary_loss
             else:
-                pinn_loss = pinn_loss + self.calculate_boundary_condition(self.boundary_condition,
+                boundary_loss = self.calculate_boundary_condition(self.boundary_condition,
                                                                           training_data[self.boundary_condition.name])
-        return pinn_loss
+                pinn_loss = pinn_loss + boundary_loss
+        return pinn_loss, init_loss, pde_loss, boundary_loss
 
     def fit(self, epochs, optimizer='Adam', learning_rate=1e-3, lbfgs_finetuning=True,
-            writing_cylcle= 30, save_model=True, pinn_path='best_model_pinn.pt', hpm_path='best_model_hpm.pt'):
+            writing_cylcle= 30, save_model=True, pinn_path='best_model_pinn.pt', hpm_path='best_model_hpm.pt', load_models=False):
         """
         Function for optimizing the parameters of the PINN-Model
 
@@ -284,7 +288,7 @@ class PINN(nn.Module):
                 lbfgs_optim = torch.optim.LBFGS(params, lr=0.9)
                 def closure():
                     lbfgs_optim.zero_grad()
-                    pinn_loss = self.pinn_loss(training_data)
+                    pinn_loss,_,_,_ = self.pinn_loss(training_data)
                     pinn_loss.backward()
                     return pinn_loss
         else:
@@ -301,9 +305,12 @@ class PINN(nn.Module):
 
                 def closure():
                     lbfgs_optim.zero_grad()
-                    pinn_loss = self.pinn_loss(training_data)
+                    pinn_loss,_,_,_ = self.pinn_loss(training_data)
                     pinn_loss.backward()
                     return pinn_loss
+                
+        if load_models:
+            self.load_model(pinn_path, hpm_path)
 
         minimum_pinn_loss = float("inf")
         if self.use_horovod:
@@ -325,14 +332,14 @@ class PINN(nn.Module):
             for training_data in data_loader:
                 training_data = training_data
                 optim.zero_grad()
-                pinn_loss = self.pinn_loss(training_data)
+                pinn_loss, init_loss, pde_loss, boundary_loss = self.pinn_loss(training_data)
                 pinn_loss.backward()
                 optim.step()
             if not self.rank:
-                print("PINN Loss {} Epoch {} from {}".format(pinn_loss, epoch, epochs))
+                print("PINN Loss {:.4f} Epoch {} from {}".format(pinn_loss, epoch, epochs))
             if self.use_wandb: # Write down train/test accuracies and loss
                 if not self.use_horovod or (self.use_horovod and hvd.rank()) == 0:
-                    wandb.log({"PINN Loss": pinn_loss.item(), "Epoch": epoch})
+                    wandb.log({"PINN Loss": pinn_loss.item(), "Initial Condition Loss": init_loss.item(), "PDE/HPM Loss": pde_loss.item(), "Boundary Loss": boundary_loss.item(), "Epoch": epoch})
 
             if (pinn_loss < minimum_pinn_loss) and not (epoch % writing_cylcle) and save_model and not self.rank:
                 self.save_model(pinn_path, hpm_path)
