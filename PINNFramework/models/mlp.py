@@ -8,8 +8,8 @@ class MLP(nn.Module):
         self.linear_layers = nn.ModuleList()
         self.activation = activation
         self.init_layers(input_size, output_size, hidden_size,num_hidden)
-        self.lb = torch.Tensor(lb).float()
-        self.ub = torch.Tensor(ub).float()
+        self.lb = lb
+        self.ub = ub
 
     def init_layers(self, input_size, output_size, hidden_size, num_hidden):
         self.linear_layers.append(nn.Linear(input_size, hidden_size))

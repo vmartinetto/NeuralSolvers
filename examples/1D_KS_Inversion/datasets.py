@@ -391,4 +391,4 @@ def TI_KS_INV_1D(x_values,u_values):
     """
 
     zeros = torch.zeros(len(x_values))
-    return torch.stack([x_values, u_values, zeros], 1).squeeze()
+    return torch.stack([x_values, u_values,zeros], 1).squeeze()
